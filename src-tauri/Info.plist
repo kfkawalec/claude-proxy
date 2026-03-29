@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  CFBundleName — krótka nazwa bez spacji (spójna z ClaudeProxy.app / productName).
+	  CFBundleDisplayName — nazwa „ludzka” ze spacją (Dock, Finder, część menu).
+	  Tytuł okna ustawia osobno tauri.conf → app.windows[].title.
+	-->
+	<key>CFBundleName</key>
+	<string>ClaudeProxy</string>
+	<key>CFBundleDisplayName</key>
+	<string>Claude Proxy</string>
+</dict>
+</plist>

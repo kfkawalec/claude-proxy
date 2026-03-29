@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-panel:     rgba(238, 238, 238, 0.84);
+  --bg-card:      rgba(255, 255, 255, 0.68);
+  --bg-input:     rgba(255, 255, 255, 0.90);
+  --bg-seg:       rgba(0, 0, 0, 0.06);
+  --bg-seg-pill:  rgba(255, 255, 255, 0.96);
+  --text-1:       rgba(0, 0, 0, 0.86);
+  --text-2:       rgba(0, 0, 0, 0.44);
+  --text-3:       rgba(0, 0, 0, 0.26);
+  --border:       rgba(0, 0, 0, 0.08);
+  --border-input: rgba(0, 0, 0, 0.16);
+  --shadow-pill:  0 1px 3px rgba(0,0,0,0.16), 0 0.5px 0 rgba(0,0,0,0.06);
+  --shadow-card:  0 1px 2px rgba(0,0,0,0.07);
+  --accent:       #007AFF;
+  --green:        #28CD41;
+  --red:          #FF3B30;
+  --orange:       #FF9500;
+  --close-bg:     rgba(0,0,0,0.07);
+  --close-hover:  rgba(0,0,0,0.13);
+  --close-x:      rgba(0,0,0,0.38);
+  --code-bg:      rgba(0,0,0,0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-panel:     rgba(28, 28, 30, 0.90);
+    --bg-card:      rgba(54, 54, 58, 0.70);
+    --bg-input:     rgba(54, 54, 58, 0.92);
+    --bg-seg:       rgba(255, 255, 255, 0.08);
+    --bg-seg-pill:  rgba(88, 88, 92, 0.96);
+    --text-1:       rgba(255, 255, 255, 0.88);
+    --text-2:       rgba(255, 255, 255, 0.40);
+    --text-3:       rgba(255, 255, 255, 0.22);
+    --border:       rgba(255, 255, 255, 0.08);
+    --border-input: rgba(255, 255, 255, 0.14);
+    --shadow-pill:  0 1px 4px rgba(0,0,0,0.55), 0 0.5px 0 rgba(0,0,0,0.3);
+    --shadow-card:  0 1px 2px rgba(0,0,0,0.32);
+    --close-bg:     rgba(255,255,255,0.08);
+    --close-hover:  rgba(255,255,255,0.15);
+    --close-x:      rgba(255,255,255,0.38);
+    --code-bg:      rgba(255,255,255,0.07);
+  }
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  color: var(--text-1);
+  /* Transparent - NSVisualEffectView (Popover material) handles the background */
+  background: transparent;
+  border-radius: 12px;
+  border: 0.5px solid var(--border);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+[data-drag] {
+  -webkit-app-region: drag;
+}
+
+[data-no-drag], button, input, a {
+  -webkit-app-region: no-drag;
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--text-3);
+  border-radius: 3px;
+}
+
+input {
+  cursor: text;
+  user-select: text;
+}

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/unpkg/1.0.0/tauri-apps/api/2/tauri.conf.schema.json",
+  "productName": "ClaudeProxy",
+  "version": "0.1.0",
+  "identifier": "com.ccproxy.dev",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Claude Proxy",
+        "width": 680,
+        "height": 620,
+        "minWidth": 680,
+        "minHeight": 620,
+        "visible": false,
+        "center": true,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "decorations": true,
+        "titleBarStyle": "Visible",
+        "hiddenTitle": false,
+        "transparent": false,
+        "skipTaskbar": false
+      }
+    ],
+    "trayIcon": {
+      "id": "main-tray",
+      "iconPath": "icons/tray-icon.png",
+      "iconAsTemplate": true,
+      "showMenuOnLeftClick": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": false,
+    "targets": [
+      "app",
+      "nsis",
+      "msi",
+      "appimage"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "bundleName": "ClaudeProxy",
+      "infoPlist": "Info.plist"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzRDgxMjA0NjI4QjQwMUMKUldRY1FJdGlCQkxZWTNOOEZQM0E1L01XQzF6L1pvUmpzQzU0NEdJb3BhMUVMTlZaZlBhdW1YN1MK",
+      "endpoints": [
+        "https://github.com/kfkawalec/claude-proxy/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

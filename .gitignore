@@ -1,0 +1,17 @@
+# System files
+thumbs.db
+*.DS_Store
+
+# Local config files
+.env
+
+# Node.js files
+**/node_modules
+**/npm-debug.log*
+
+# Vite build output
+dist/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
