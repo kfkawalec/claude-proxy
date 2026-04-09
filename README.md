@@ -1,13 +1,11 @@
 # Claude Proxy
 
-Aplikacja desktopowa (Tauri + SolidJS) działająca jako proxy między Claude Code a dostawcami AI (Anthropic oraz hub zgodny z OpenAI API, np. wdrożenie LiteLLM). W interfejsie nadajesz hubowi **własną nazwę wyświetlaną** (nie musi to być słowo „LiteLLM”). Pozwala przełączać provider bez restartu Claude Code.
+Aplikacja desktopowa (Tauri + SolidJS) działająca jako proxy między Claude Code a dostawcami AI (Anthropic oraz hub zgodny z OpenAI API, np. LiteLLM). W interfejsie nadajesz hubowi **własną nazwę wyświetlaną** (nie musi to być słowo „LiteLLM”). Możesz przełączać provider bez restartu Claude Code.
 
 ## Architektura
 
-- **`src/`** - frontend SolidJS (panel zarządzania, tray icon)
-- **`src-tauri/`** - backend Rust (Tauri), bundle do aplikacji `.app`
-
----
+- **`src/`** - frontend SolidJS (panel, ikona w trayu)
+- **`src-tauri/`** - backend Rust (Tauri), bundlowanie do `.app` / `.exe` / AppImage
 
 ## Wymagania
 
@@ -19,8 +17,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 npm install
 ```
 
----
-
 ## Uruchomienie
 
 ### Dev (hot reload)
@@ -29,7 +25,7 @@ npm install
 npm run tauri dev
 ```
 
-Uruchamia Vite dev server + aplikację Tauri. Ikona pojawi się w tray barze. Logi Rust widoczne w terminalu.
+Vite + aplikacja Tauri. Ikona w obszarze powiadomień / pasku menu. Logi Rust w terminalu.
 
 ### Produkcja - kompilacja
 
@@ -38,61 +34,49 @@ npm run tauri build
 open src-tauri/target/release/bundle/macos/ClaudeProxy.app
 ```
 
-### DMG do dystrybucji
-
-```
-src-tauri/target/release/bundle/dmg/ClaudeProxy_*.dmg
-```
-
----
-
 ## Konfiguracja Claude Code
 
 Proxy nasłuchuje na porcie **3456**.
 
 **Opcje:**
 
-1. **Z panelu (Status → Install)** — zapisuje `ANTHROPIC_BASE_URL` do `~/.claude/settings.json` (i robi kopię zapasową poprzedniej wartości). Nie musisz edytować shella ręcznie.
-2. **Ręcznie w shellu** — np. w `~/.zshrc`:
+1. **Z aplikacji** - w lewej kolumnie sekcja **Claude Code**: instalacja zapisuje `ANTHROPIC_BASE_URL` w `~/.claude/settings.json` (z kopią zapasową poprzedniej wartości). Nie trzeba edytować shella ręcznie.
+2. **Ręcznie w shellu** - np. w `~/.zshrc`:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3456
 ```
 
----
-
 ## Uwierzytelnianie
 
 ### Claude (Anthropic)
 
-Proxy **nie wstawia własnego klucza** — przekazuje dalej nagłówki z Claude Code (`x-api-key` / `Authorization`). Musisz być zalogowany w **Claude Code** (typowo OAuth: `claude auth login`).
+Proxy **nie wstawia własnego klucza** - przekazuje nagłówki z Claude Code (`x-api-key` / `Authorization`). Musisz być zalogowany w **Claude Code** (np. `claude auth login`).
 
 **Jak sprawdzić:**
 
-- W terminalu: `claude auth status` — w odpowiedzi JSON pole `loggedIn` (na macOS OAuth jest w Keychain).
-- W aplikacji: **Ustawienia** — kolorowa kropka przy statusie logowania; przycisk **„Zaloguj przez CLI”** (macOS: otwiera Terminal z `claude auth login`).
+- W terminalu: `claude auth status` - w JSON m.in. pole `loggedIn`.
+- W aplikacji: lewa kolumna **Claude Code** - kropka statusu i przycisk logowania (CLI otwiera terminal z `claude auth login`; szczegóły przechowywania OAuth zależą od systemu, na macOS często Keychain).
 
 ### Hub (OpenAI-compatible / LiteLLM)
 
-Przy wybranym drugim providerze: w **Ustawieniach** ustaw **nazwę w interfejsie** (jak ma się nazywać w UI), **URL** i **klucz API** do Twojego proxy; opcjonalnie **URL panelu zużycia** (link w zakładce Użycie). Mapowanie modeli Claude → modele upstream: zakładka **Modele**.
+Przy wybranym hubie w **Settings** ustaw **nazwę wyświetlaną**, **URL** i **klucz API**. Mapowanie **Claude → modele upstream** (Opus / Sonnet / Haiku) jest w tej samej zakładce.
 
----
+Zakładka **Stats** pokazuje m.in. lokalne sumy zapytań/tokenów przez proxy, limity planu Claude (gdy dotyczy) oraz zużycie z huba (API - m.in. okres „ostatni miesiąc”, modele), o ile klucz ma wymagane uprawnienia.
 
 ## Logi
 
 ### Dev
 
-Logi Rust bezpośrednio w terminalu z `npm run tauri dev`.
+Logi Rust w terminalu uruchomionym z `npm run tauri dev`.
 
 ### Produkcja
 
+- **Plik proxy (żądania, upstream):**
+  `~/.config/claude-proxy/proxy.log` na macOS/Linux; na Windows zwykle `%USERPROFILE%\.config\claude-proxy\proxy.log`.
+
+- **macOS - strumień logów systemowych (przykład):**
+
 ```bash
-# Logi na żywo (systemowe):
 log stream --predicate 'process == "claude-proxy"' --level debug
-
-# Lub uruchom .app z terminala - logi na stdout (plik wykonywalny ma nazwę z Cargo):
-"/Applications/ClaudeProxy.app/Contents/MacOS/claude-proxy"
-
-# Zdarzenia proxy (żądania, statusy upstreamu):
-~/.config/claude-proxy/proxy.log
 ```
