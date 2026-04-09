@@ -1,14 +1,51 @@
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_LOG_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-const ENABLE_FILE_LOG: bool = true;
-const FLUSH_INTERVAL: Duration = Duration::from_secs(2);
-const ROTATION_CHECK_WRITES: u32 = 50;
+/// When `CLAUDE_PROXY_LOG_REQUEST_BODY` is `1`/`true`/`yes`, log the outbound request body
+/// (after model mapping) for diffing token usage. Can be large and sensitive;
+/// avoid sharing logs. File logging is on by default (`proxy.log`); set `CLAUDE_PROXY_FILE_LOG=0` to turn off.
+fn request_body_log_enabled() -> bool {
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var("CLAUDE_PROXY_LOG_REQUEST_BODY")
+            .map(|v| {
+                let v = v.trim().to_lowercase();
+                v == "1" || v == "true" || v == "yes"
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn request_body_log_max_bytes() -> usize {
+    static CACHED: OnceLock<usize> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var("CLAUDE_PROXY_LOG_REQUEST_BODY_MAX")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(512 * 1024)
+    })
+}
+
+/// Append proxy lines to `~/.config/claude-proxy/proxy.log` by default.
+/// Set `CLAUDE_PROXY_FILE_LOG=0` / `false` / `no` to disable file (then lines go to stdout only).
+fn file_log_enabled() -> bool {
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        match std::env::var("CLAUDE_PROXY_FILE_LOG") {
+            Ok(v) => {
+                let v = v.trim().to_lowercase();
+                !(v == "0" || v == "false" || v == "no")
+            }
+            Err(_) => true,
+        }
+    })
+}
 
 fn log_path() -> PathBuf {
     crate::platform::home_dir()
@@ -18,9 +55,7 @@ fn log_path() -> PathBuf {
 }
 
 struct LogWriter {
-    writer: BufWriter<File>,
-    last_flush: Instant,
-    writes_since_check: u32,
+    writer: BufWriter<std::fs::File>,
 }
 
 static LOG_STATE: OnceLock<Mutex<Option<LogWriter>>> = OnceLock::new();
@@ -61,12 +96,10 @@ fn open_writer() -> Option<LogWriter> {
         .ok()?;
     Some(LogWriter {
         writer: BufWriter::new(file),
-        last_flush: Instant::now(),
-        writes_since_check: 0,
     })
 }
 
-/// File-backed API / proxy logger with a cached buffered writer.
+/// File-backed API / proxy logger with a cached buffered writer when file logging is enabled.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct ApiLogger;
 
@@ -84,8 +117,9 @@ impl ApiLogger {
         model: &str,
         auth_out_masked: &str,
     ) {
+        let now = chrono::Local::now().format("%H:%M:%S");
         self.line(&format!(
-            "req provider={provider} method={method} path={path} upstream={upstream_url} model={model} out_auth={auth_out_masked}",
+            "[proxy] {now} → {provider} {upstream_url} model={model} {method} {path} auth={auth_out_masked}",
         ));
     }
 
@@ -118,39 +152,45 @@ impl ApiLogger {
             "upstream stream provider={provider} path={path} (body not buffered)",
         ));
     }
+
+    /// Logs body size always; full UTF-8 prefix when `CLAUDE_PROXY_LOG_REQUEST_BODY=1`
+    /// (trimmed by `CLAUDE_PROXY_LOG_REQUEST_BODY_MAX`, default 512 KiB).
+    pub fn request_body_debug(&self, body: &[u8]) {
+        self.line(&format!("request_body_bytes={}", body.len()));
+        if !request_body_log_enabled() {
+            return;
+        }
+        let max = request_body_log_max_bytes();
+        let s = String::from_utf8_lossy(body);
+        let prefix = truncate_bytes_utf8(&s, max);
+        let suffix = if s.len() > prefix.len() {
+            format!(" ...[truncated total={} bytes]", s.len())
+        } else {
+            String::new()
+        };
+        self.line(&format!("request_body_utf8={prefix}{suffix}"));
+    }
 }
 
 fn write_line(message: &str) {
-    if !ENABLE_FILE_LOG {
-        return;
-    }
-    let lock = log_state();
-    let Ok(mut guard) = lock.lock() else {
-        return;
-    };
-
-    if guard.is_none() {
-        maybe_rotate();
-        *guard = open_writer();
-    }
-
-    let Some(lw) = guard.as_mut() else {
-        return;
-    };
-
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    let _ = writeln!(lw.writer, "[{ts}] {message}");
+    let line = format!("[{ts}] {message}");
 
-    if lw.last_flush.elapsed() >= FLUSH_INTERVAL {
-        let _ = lw.writer.flush();
-        lw.last_flush = Instant::now();
-    }
-
-    lw.writes_since_check += 1;
-    if lw.writes_since_check >= ROTATION_CHECK_WRITES {
-        lw.writes_since_check = 0;
-        let _ = lw.writer.flush();
-        *guard = None;
+    if file_log_enabled() {
+        let lock = log_state();
+        let Ok(mut guard) = lock.lock() else {
+            return;
+        };
+        if guard.is_none() {
+            maybe_rotate();
+            *guard = open_writer();
+        }
+        if let Some(lw) = guard.as_mut() {
+            let _ = writeln!(lw.writer, "{line}");
+            let _ = lw.writer.flush();
+        }
+    } else {
+        println!("{line}");
     }
 }
 
@@ -158,7 +198,27 @@ pub fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
-    format!("{}...[truncated {} chars]", &s[..max], s.len() - max)
+    let end = truncate_end_char_boundary(s, max);
+    format!("{}...[truncated {} bytes]", &s[..end], s.len() - end)
+}
+
+fn truncate_end_char_boundary(s: &str, max_bytes: usize) -> usize {
+    if s.len() <= max_bytes {
+        return s.len();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
+fn truncate_bytes_utf8(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let end = truncate_end_char_boundary(s, max_bytes);
+    s[..end].to_string()
 }
 
 pub fn mask_secret(value: &str) -> String {

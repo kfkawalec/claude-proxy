@@ -6,6 +6,42 @@ use hyper::{Response, StatusCode};
 
 use super::ProxyBody;
 
+// ---------------------------------------------------------------------------
+// Anthropic-shaped API errors (shared by proxy failures and backend normalization)
+// ---------------------------------------------------------------------------
+
+/// JSON body: `{"type":"error","error":{"type":"invalid_request_error","message":...}}`
+pub fn anthropic_invalid_request_bytes(message: &str) -> Bytes {
+    let body = serde_json::json!({
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": message
+        }
+    });
+    Bytes::from(serde_json::to_vec(&body).expect("anthropic error json"))
+}
+
+/// Appended to LiteLLM-normalized messages when vision is involved.
+pub const CLIENT_VISION_HINT: &str = " Selected model does not support image input (vision). Choose a vision-capable model.";
+
+/// User-facing LiteLLM / hub copy (English).
+pub mod litellm {
+    pub const MODEL_NOT_ON_HUB_GENERIC: &str = "The requested model is not supported or is not configured on the LiteLLM hub (routing/fallback failed, e.g. HTTP 404). Pick a valid model or fix provider and fallback mapping in LiteLLM.";
+
+    pub const THINKING_HISTORY_INCOMPATIBLE: &str = "Conversation history includes extended-thinking blocks that this upstream route rejects (invalid thinking/signature shape). Start a new chat or clear context when switching models or proxy routes; if it keeps happening, update the client or LiteLLM.";
+
+    pub fn model_not_on_hub_named(model: &str) -> String {
+        format!(
+            "Model `{model}` is not supported or is not configured on the LiteLLM hub (routing/fallback failed, e.g. HTTP 404). Pick a model that exists in the hub or fix provider and fallback mapping in LiteLLM."
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Proxy-internal errors (auth, transport, etc.)
+// ---------------------------------------------------------------------------
+
 #[derive(Debug)]
 pub enum ProxyError {
     Auth(StatusCode, String),
@@ -33,11 +69,7 @@ impl ProxyError {
             Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.as_str()),
         };
 
-        let body = serde_json::json!({
-            "type": "error",
-            "error": {"type": "invalid_request_error", "message": message}
-        });
-        let bytes = Bytes::from(serde_json::to_vec(&body).unwrap());
+        let bytes = anthropic_invalid_request_bytes(message);
         let s = futures_util::stream::iter(std::iter::once(Ok::<_, std::io::Error>(
             Frame::data(bytes),
         )));

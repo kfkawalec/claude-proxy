@@ -186,7 +186,12 @@ impl AppState {
             shutdown_tx,
             shutdown_rx,
             proxy_task: Mutex::new(None),
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .no_gzip()
+                .no_brotli()
+                .no_deflate()
+                .build()
+                .expect("failed to build http client"),
             app_handle: RwLock::new(None),
             activity_log: RwLock::new(VecDeque::with_capacity(100)),
             usage_db_path: Mutex::new(None),

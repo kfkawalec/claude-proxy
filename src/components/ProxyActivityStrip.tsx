@@ -75,7 +75,8 @@ export default function ProxyActivityStrip() {
         "flex-direction": "column",
         height: "100%",
         "min-height": "0",
-        "margin-top": "0",
+        margin: "0 10px",
+        width: "calc(100% - 20px)",
         overflow: "hidden",
         "border-radius": "7px",
         background: "var(--bg)",
@@ -139,7 +140,8 @@ export default function ProxyActivityStrip() {
             "min-height": "0",
             "min-width": "0",
             width: "100%",
-            overflow: "auto",
+            "overflow-x": "auto",
+            "overflow-y": "auto",
             "WebkitOverflowScrolling": "touch",
           }}
         >

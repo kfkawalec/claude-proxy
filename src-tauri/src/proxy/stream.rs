@@ -13,6 +13,46 @@ pub struct ExtractedUsage {
     pub output_tokens: u64,
 }
 
+/// Sum `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`
+/// from an Anthropic usage JSON object.
+pub fn sum_anthropic_input(usage: &serde_json::Value) -> u64 {
+    let base = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let cache_create = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let cache_read = usage
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    base + cache_create + cache_read
+}
+
+/// Input/output from a JSON `usage` object (Anthropic with cache vs OpenAI-style `prompt_tokens`).
+pub fn usage_io_from_usage_obj(usage: &serde_json::Value) -> (u64, u64) {
+    let has_anthropic_shape = usage.get("input_tokens").is_some()
+        || usage.get("cache_read_input_tokens").is_some()
+        || usage.get("cache_creation_input_tokens").is_some();
+    let input = if has_anthropic_shape {
+        sum_anthropic_input(usage)
+    } else {
+        usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
+    };
+    let output = usage
+        .get("output_tokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| usage.get("completion_tokens").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+    (input, output)
+}
+
+pub fn usage_from_response_json(json: &serde_json::Value) -> (u64, u64) {
+    match json.get("usage") {
+        Some(u) => usage_io_from_usage_obj(u),
+        None => (0, 0),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SSE usage scanner (shared logic)
 // ---------------------------------------------------------------------------
@@ -48,25 +88,18 @@ impl UsageScanner {
             return;
         };
 
-        // Anthropic: message_start → message.usage.input_tokens
-        if let Some(it) = json
-            .pointer("/message/usage/input_tokens")
-            .and_then(|v| v.as_u64())
-        {
-            self.input_tokens = it;
+        // Anthropic: message_start → message.usage
+        if let Some(usage) = json.pointer("/message/usage") {
+            self.input_tokens = sum_anthropic_input(usage);
         }
-        // Anthropic: message_delta may include full usage (input + output)
-        if let Some(it) = json
-            .pointer("/usage/input_tokens")
-            .and_then(|v| v.as_u64())
-        {
-            self.input_tokens = it;
-        }
-        if let Some(ot) = json
-            .pointer("/usage/output_tokens")
-            .and_then(|v| v.as_u64())
-        {
-            self.output_tokens = ot;
+        // Anthropic: message_delta → usage (may override)
+        if let Some(usage) = json.get("usage") {
+            if usage.get("input_tokens").is_some() {
+                self.input_tokens = sum_anthropic_input(usage);
+            }
+            if let Some(ot) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                self.output_tokens = ot;
+            }
         }
         // OpenAI: usage.prompt_tokens / completion_tokens
         if let Some(pt) = json
@@ -140,242 +173,6 @@ impl Stream for UsageCapturingStream {
                 Poll::Ready(None)
             }
             Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// BridgeTransformStream – OpenAI SSE → Anthropic Messages SSE, real-time
-// ---------------------------------------------------------------------------
-
-/// Transforms an upstream OpenAI chat-completions SSE stream into Anthropic
-/// Messages SSE format in real time. Also extracts usage and sends it via
-/// oneshot when the stream completes.
-pub struct BridgeTransformStream {
-    inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
-    model: String,
-    line_buf: String,
-    started: bool,
-    block_started: bool,
-    usage_prompt: u64,
-    usage_completion: u64,
-    finish_reason: String,
-    done_tx: Option<oneshot::Sender<ExtractedUsage>>,
-    finished: bool,
-}
-
-impl BridgeTransformStream {
-    pub fn new(
-        inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
-        model: String,
-        done_tx: oneshot::Sender<ExtractedUsage>,
-    ) -> Self {
-        Self {
-            inner: Box::pin(inner),
-            model,
-            line_buf: String::new(),
-            started: false,
-            block_started: false,
-            usage_prompt: 0,
-            usage_completion: 0,
-            finish_reason: "end_turn".into(),
-            done_tx: Some(done_tx),
-            finished: false,
-        }
-    }
-
-    fn send_usage(&mut self) {
-        if let Some(tx) = self.done_tx.take() {
-            let _ = tx.send(ExtractedUsage {
-                input_tokens: self.usage_prompt,
-                output_tokens: self.usage_completion,
-            });
-        }
-    }
-
-    fn process_lines(&mut self, output: &mut Vec<u8>) {
-        while let Some(pos) = self.line_buf.find('\n') {
-            let line = self.line_buf[..pos].trim().to_string();
-            self.line_buf = self.line_buf[pos + 1..].to_string();
-            if line.is_empty() {
-                continue;
-            }
-
-            let Some(data) = line.strip_prefix("data:") else {
-                continue;
-            };
-            let data = data.trim();
-            if data == "[DONE]" {
-                self.emit_closing(output);
-                return;
-            }
-            let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) else {
-                continue;
-            };
-            self.transform_chunk(&chunk, output);
-        }
-    }
-
-    fn transform_chunk(&mut self, chunk: &serde_json::Value, output: &mut Vec<u8>) {
-        if !self.started {
-            let id = chunk
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("msg_bridge");
-            write_sse(
-                output,
-                "message_start",
-                &serde_json::json!({
-                    "type": "message_start",
-                    "message": {
-                        "id": id, "type": "message", "role": "assistant",
-                        "content": [], "model": &self.model,
-                        "stop_reason": serde_json::Value::Null,
-                        "stop_sequence": serde_json::Value::Null,
-                        "usage": {"input_tokens":0,"output_tokens":0,
-                                  "cache_creation_input_tokens":0,"cache_read_input_tokens":0}
-                    }
-                }),
-            );
-            write_sse(
-                output,
-                "content_block_start",
-                &serde_json::json!({
-                    "type":"content_block_start","index":0,
-                    "content_block":{"type":"text","text":""}
-                }),
-            );
-            self.started = true;
-            self.block_started = true;
-        }
-
-        if let Some(usage) = chunk.get("usage") {
-            if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
-                self.usage_prompt = pt;
-            }
-            if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
-                self.usage_completion = ct;
-            }
-        }
-
-        let Some(choice) = chunk
-            .get("choices")
-            .and_then(|c| c.as_array())
-            .and_then(|a| a.first())
-        else {
-            return;
-        };
-
-        if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-            self.finish_reason = match fr {
-                "length" => "max_tokens",
-                "tool_calls" => "tool_use",
-                _ => "end_turn",
-            }
-            .to_string();
-        }
-
-        let delta_text = choice
-            .get("delta")
-            .and_then(|d| d.get("content"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("");
-        if !delta_text.is_empty() {
-            write_sse(
-                output,
-                "content_block_delta",
-                &serde_json::json!({
-                    "type":"content_block_delta","index":0,
-                    "delta":{"type":"text_delta","text":delta_text}
-                }),
-            );
-        }
-    }
-
-    fn emit_closing(&mut self, output: &mut Vec<u8>) {
-        if self.block_started {
-            write_sse(
-                output,
-                "content_block_stop",
-                &serde_json::json!({"type":"content_block_stop","index":0}),
-            );
-        }
-        if self.started {
-            write_sse(
-                output,
-                "message_delta",
-                &serde_json::json!({
-                    "type":"message_delta",
-                    "delta":{"stop_reason":&self.finish_reason,"stop_sequence":serde_json::Value::Null},
-                    "usage":{"output_tokens":self.usage_completion}
-                }),
-            );
-            write_sse(
-                output,
-                "message_stop",
-                &serde_json::json!({"type":"message_stop"}),
-            );
-        }
-        self.finished = true;
-    }
-}
-
-fn write_sse(output: &mut Vec<u8>, event: &str, data: &serde_json::Value) {
-    use std::fmt::Write;
-    let mut s = String::new();
-    let _ = write!(s, "event: {event}\ndata: {data}\n\n");
-    output.extend_from_slice(s.as_bytes());
-}
-
-impl Stream for BridgeTransformStream {
-    type Item = Result<Frame<Bytes>, io::Error>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-
-        if this.finished {
-            return Poll::Ready(None);
-        }
-
-        loop {
-            match this.inner.as_mut().poll_next(cx) {
-                Poll::Ready(Some(Ok(bytes))) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    this.line_buf.push_str(&text);
-
-                    let mut output = Vec::new();
-                    this.process_lines(&mut output);
-
-                    if this.finished {
-                        this.send_usage();
-                    }
-
-                    if !output.is_empty() {
-                        return Poll::Ready(Some(Ok(Frame::data(Bytes::from(output)))));
-                    }
-
-                    if this.finished {
-                        return Poll::Ready(None);
-                    }
-                    continue;
-                }
-                Poll::Ready(Some(Err(e))) => {
-                    return Poll::Ready(Some(Err(io::Error::new(io::ErrorKind::Other, e))));
-                }
-                Poll::Ready(None) => {
-                    let mut output = Vec::new();
-                    if !this.finished {
-                        this.emit_closing(&mut output);
-                    }
-                    this.send_usage();
-
-                    if output.is_empty() {
-                        return Poll::Ready(None);
-                    }
-                    return Poll::Ready(Some(Ok(Frame::data(Bytes::from(output)))));
-                }
-                Poll::Pending => return Poll::Pending,
-            }
         }
     }
 }

@@ -1,5 +1,5 @@
 use super::{IncomingAuth, PreparedBody, ProxyBackend, ResolvedAuth, UpstreamTarget};
-use crate::proxy::bridge;
+use crate::proxy::error::{anthropic_invalid_request_bytes, litellm as litellm_msg, CLIENT_VISION_HINT};
 use crate::proxy::logging::ApiLogger;
 use crate::proxy::ProxyBody;
 use crate::state::UsageData;
@@ -70,6 +70,58 @@ pub fn detect_vision(payload: &serde_json::Value) -> bool {
         .unwrap_or(false)
 }
 
+/// Wyciąga nazwę grupy modelu z typowych komunikatów LiteLLM (fallback / routing).
+fn extract_litellm_model_group_token(msg: &str) -> Option<String> {
+    let lower = msg.to_lowercase();
+    for key in ["original model_group=", "received model group="] {
+        if let Some(pos) = lower.find(key) {
+            let start = pos + key.len();
+            let tail = msg.get(start..)?;
+            let end = tail
+                .find(|c: char| c.is_whitespace() || matches!(c, '.' | ',' | '\n' | '\r'))
+                .unwrap_or(tail.len());
+            let name = tail[..end].trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// LiteLLM: brak routingu / fallbacku / 404 na grupie modelu — czytelny komunikat zamiast ściany tekstu.
+fn litellm_model_routing_failure_user_message(err_msg: &str) -> Option<String> {
+    let low = err_msg.to_lowercase();
+    let looks_routing = low.contains("no fallback model group found")
+        || (low.contains("model_group") && low.contains("fallback") && low.contains("404"))
+        || (low.contains("available model group fallbacks")
+            && low.contains("none")
+            && low.contains("model group"));
+    if !looks_routing {
+        return None;
+    }
+    let model = extract_litellm_model_group_token(err_msg);
+    Some(match model {
+        Some(m) => litellm_msg::model_not_on_hub_named(&m),
+        None => litellm_msg::MODEL_NOT_ON_HUB_GENERIC.to_string(),
+    })
+}
+
+/// Walidacja bloków `thinking` / `signature` w historii — często po zmianie modelu lub trasy przez LiteLLM.
+fn litellm_thinking_block_validation_user_message(err_msg: &str) -> Option<String> {
+    let low = err_msg.to_lowercase();
+    if !low.contains("thinking") {
+        return None;
+    }
+    if !(low.contains("valid string") || low.contains("should be a valid string")) {
+        return None;
+    }
+    if !low.contains("messages.") && !low.contains("thinking.signature") {
+        return None;
+    }
+    Some(litellm_msg::THINKING_HISTORY_INCOMPATIBLE.to_string())
+}
+
 pub fn normalize_litellm_error(
     log: &ApiLogger,
     resp_bytes: &[u8],
@@ -96,29 +148,41 @@ pub fn normalize_litellm_error(
         })
         .unwrap_or("Upstream provider returned an error");
 
+    let thinking_friendly = litellm_thinking_block_validation_user_message(err_msg);
+    let routing_friendly = if thinking_friendly.is_some() {
+        None
+    } else {
+        litellm_model_routing_failure_user_message(err_msg)
+    };
+    let thinking_used = thinking_friendly.is_some();
+    let routing_used = routing_friendly.is_some();
+    let mut user_message = thinking_friendly
+        .or(routing_friendly)
+        .unwrap_or_else(|| {
+            if err_code.is_empty() {
+                format!("Provider request failed: {err_msg}")
+            } else {
+                format!("Provider request failed ({err_code}): {err_msg}")
+            }
+        });
+
     let low = err_msg.to_lowercase();
     let hint = if has_vision
         || low.contains("vision")
         || low.contains("image")
         || low.contains("multimodal")
     {
-        " Selected model does not support image input (vision). Choose a vision-capable model."
+        CLIENT_VISION_HINT
     } else {
         ""
     };
+    user_message.push_str(hint);
 
-    let normalized = serde_json::json!({
-        "type": "error",
-        "error": {
-            "type": "invalid_request_error",
-            "message": format!("Provider request failed ({err_code}): {err_msg}.{hint}"),
-        }
-    });
-    let bytes = serde_json::to_vec(&normalized).ok()?;
+    let bytes = anthropic_invalid_request_bytes(&user_message);
     log.line(&format!(
-        "normalized_litellm_error code={err_code} vision={has_vision}"
+        "normalized_litellm_error code={err_code} vision={has_vision} thinking_friendly={thinking_used} model_routing_friendly={routing_used}"
     ));
-    Some((Bytes::from(bytes), StatusCode::BAD_REQUEST))
+    Some((bytes, StatusCode::BAD_REQUEST))
 }
 
 fn parse_litellm_failure(bytes: &[u8]) -> Option<serde_json::Value> {
@@ -175,10 +239,6 @@ impl ProxyBackend for LitellmBackend {
             base_url,
             default_path: "/v1/messages".into(),
         }
-    }
-
-    fn should_apply_chat_completions_bridge(&self, path: &str, model: Option<&str>) -> bool {
-        bridge::chat_completions_bridge_applies(path, model)
     }
 
     fn prepare_body(
@@ -268,16 +328,10 @@ impl ProxyBackend for LitellmBackend {
         let Ok(json) = serde_json::from_slice::<serde_json::Value>(resp_bytes) else {
             return;
         };
-        let input = json
-            .get("usage")
-            .and_then(|u| u.get("input_tokens"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let output = json
-            .get("usage")
-            .and_then(|u| u.get("output_tokens"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let (input, output) = match json.get("usage") {
+            Some(u) => crate::proxy::stream::usage_io_from_usage_obj(u),
+            None => (0, 0),
+        };
 
         if !is_messages && input == 0 && output == 0 {
             return;

@@ -20,6 +20,10 @@ export default function SegmentedControl(props: Props) {
       padding: "3px",
       gap: "2px",
       height: h(),
+      /* Nie na pełną szerokość karty — tor wygląda jak „pasek” przy krawędziach */
+      margin: "0 12px",
+      width: "calc(100% - 24px)",
+      "box-sizing": "border-box",
     }}>
       <For each={props.options}>
         {(option) => {

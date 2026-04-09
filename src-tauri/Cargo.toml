@@ -21,8 +21,8 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body = "1"
 http-body-util = "0.1"
-reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate"] }
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# Bez gzip/brotli/deflate — klient i tak ma no_gzip/no_brotli/no_deflate (state.rs).
+reqwest = { version = "0.12", features = ["json", "stream"] }
 notify = "6"
 chrono = { version = "0.4", features = ["serde"] }
 bytes = "1"

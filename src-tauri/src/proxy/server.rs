@@ -40,6 +40,7 @@ pub async fn run_proxy(
             result = listener.accept() => {
                 match result {
                     Ok((stream, _)) => {
+                        let _ = stream.set_nodelay(true);
                         let state = state.clone();
                         let io = TokioIo::new(stream);
                         tokio::spawn(async move {

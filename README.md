@@ -72,8 +72,10 @@ Logi Rust w terminalu uruchomionym z `npm run tauri dev`.
 
 ### Produkcja
 
-- **Plik proxy (żądania, upstream):**
-  `~/.config/claude-proxy/proxy.log` na macOS/Linux; na Windows zwykle `%USERPROFILE%\.config\claude-proxy\proxy.log`.
+- **Plik proxy (żądania, upstream):** domyślnie dopisywany do  
+  `~/.config/claude-proxy/proxy.log` (macOS/Linux) lub `%USERPROFILE%\.config\claude-proxy\proxy.log` (Windows).  
+  Wyłączenie: `CLAUDE_PROXY_FILE_LOG=0` (wtedy same linie idą na stdout — przy apce z Docka na macOS zwykle „nigdzie”).
+- **Pełne body żądania** (do porównań / debugu): `CLAUDE_PROXY_LOG_REQUEST_BODY=1` (opcjonalnie `CLAUDE_PROXY_LOG_REQUEST_BODY_MAX` w bajtach).
 
 - **macOS - strumień logów systemowych (przykład):**
 

@@ -1,8 +1,7 @@
 use crate::proxy::backends::{backend_for, extract_auth, ProxyBackend, ResolvedAuth};
-use crate::proxy::bridge;
 use crate::proxy::error::ProxyError;
 use crate::proxy::logging::{ApiLogger, mask_secret};
-use crate::proxy::stream::{BridgeTransformStream, ExtractedUsage, UsageCapturingStream};
+use crate::proxy::stream::{ExtractedUsage, UsageCapturingStream};
 use crate::proxy::ProxyBody;
 use crate::state::{AppState, ProxyActivityEntry};
 use tauri::Emitter;
@@ -28,7 +27,6 @@ struct RequestContext {
     auth: ResolvedAuth,
     effective_model: Option<String>,
     has_vision: bool,
-    bridge: Option<bridge::BridgeRequest>,
     upstream_url: String,
     path_and_query: String,
     is_messages: bool,
@@ -93,32 +91,18 @@ async fn build_context(
 
     let body_bytes = body.collect().await?.to_bytes().to_vec();
     let prepared = backend.prepare_body(body_bytes, &overrides);
-    let mut body_vec = prepared.body;
+    let body_vec = prepared.body;
     let effective_model = prepared.effective_model;
     let has_vision = prepared.has_vision_input;
 
     let auth = backend.resolve_auth(&litellm_key, &incoming_auth);
 
     let target = backend.upstream_target(&litellm_endpoint);
-    let incoming_path = parts.uri.path().to_string();
-    let mut path_and_query = parts
+    let path_and_query = parts
         .uri
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| target.default_path.clone());
-
-    let mut bridge_ctx: Option<bridge::BridgeRequest> = None;
-    if backend.should_apply_chat_completions_bridge(&incoming_path, effective_model.as_deref()) {
-        if let Some(br) = bridge::rewrite_request(&body_vec) {
-            log.line(&format!(
-                "bridge rewrite model={} stream={} {} → {}",
-                br.model, br.stream, incoming_path, br.path
-            ));
-            path_and_query = br.path.clone();
-            body_vec = br.body.clone();
-            bridge_ctx = Some(br);
-        }
-    }
 
     let upstream_url = format!("{}{}", target.base_url, path_and_query);
     let is_messages = parts.method == hyper::Method::POST && parts.uri.path() == "/v1/messages";
@@ -133,7 +117,6 @@ async fn build_context(
         auth,
         effective_model,
         has_vision,
-        bridge: bridge_ctx,
         upstream_url,
         path_and_query,
         is_messages,
@@ -144,11 +127,6 @@ async fn build_context(
 
 fn log_request(ctx: &RequestContext) {
     let model_label = ctx.effective_model.as_deref().unwrap_or("unknown");
-    let now = chrono::Utc::now().format("%H:%M:%S");
-    println!(
-        "[proxy] {now} → {} {} {model_label}",
-        ctx.provider_name, ctx.upstream_url
-    );
     ctx.log.request_meta(
         &ctx.provider_name,
         ctx.method.as_str(),
@@ -161,6 +139,9 @@ fn log_request(ctx: &RequestContext) {
             .map(mask_secret)
             .unwrap_or_else(|| "none".into()),
     );
+    if ctx.method == hyper::Method::POST {
+        ctx.log.request_body_debug(&ctx.body);
+    }
 }
 
 async fn send_upstream(
@@ -172,7 +153,9 @@ async fn send_upstream(
         ctx.backend
             .apply_upstream_headers(req_builder, &ctx.headers, &ctx.auth);
 
-    req_builder.body(ctx.body.clone()).send().await.map_err(|err| {
+    let req_builder = req_builder.body(ctx.body.clone());
+
+    req_builder.send().await.map_err(|err| {
         ctx.log
             .upstream_error(&ctx.provider_name, &ctx.path_and_query, &err.to_string());
         ProxyError::Upstream(StatusCode::BAD_GATEWAY, err.to_string())
@@ -180,7 +163,7 @@ async fn send_upstream(
 }
 
 // ---------------------------------------------------------------------------
-// Response processing: bridge-streaming / bridge-buffered / streaming / buffered
+// Response processing: streaming / buffered
 // ---------------------------------------------------------------------------
 
 async fn process_response(
@@ -200,33 +183,6 @@ async fn process_response(
         .upstream_status(status.as_u16(), &ctx.provider_name, &ctx.path_and_query);
 
     let is_sse = status.is_success() && is_event_stream(&content_type);
-    let bridge_wants_stream = ctx
-        .bridge
-        .as_ref()
-        .map(|br| br.stream)
-        .unwrap_or(false);
-    let has_bridge = ctx.bridge.is_some();
-
-    if has_bridge {
-        if bridge_wants_stream && is_sse {
-            return Ok(process_bridge_streaming(
-                ctx,
-                upstream_resp,
-                status,
-                &upstream_headers,
-                state,
-            ));
-        }
-        return process_bridge_buffered(
-            ctx,
-            upstream_resp,
-            status,
-            &upstream_headers,
-            &content_type,
-            state,
-        )
-        .await;
-    }
 
     if is_sse {
         return Ok(process_streaming(
@@ -248,112 +204,6 @@ async fn process_response(
         state,
     )
     .await
-}
-
-/// Bridge + SSE: transform OpenAI SSE → Anthropic SSE in real-time.
-fn process_bridge_streaming(
-    ctx: RequestContext,
-    upstream_resp: reqwest::Response,
-    status: reqwest::StatusCode,
-    upstream_headers: &reqwest::header::HeaderMap,
-    state: Arc<AppState>,
-) -> Response<ProxyBody> {
-    let model = ctx
-        .bridge
-        .as_ref()
-        .map(|br| br.model.clone())
-        .unwrap_or_default();
-    ctx.log
-        .stream_response(&ctx.provider_name, &ctx.path_and_query);
-    ctx.backend
-        .log_rate_limit(&ctx.log, status.as_u16(), &ctx.path_and_query);
-
-    let (usage_tx, usage_rx) = tokio::sync::oneshot::channel();
-    let bridge_stream =
-        BridgeTransformStream::new(upstream_resp.bytes_stream(), model, usage_tx);
-
-    spawn_usage_updater(
-        usage_rx,
-        state,
-        ctx.backend.id(),
-        ctx.effective_model.clone(),
-        ctx.is_messages,
-        Some(activity_ctx_from(&ctx, status.as_u16())),
-    );
-
-    let body = UnsyncBoxBody::new(StreamBody::new(bridge_stream));
-    build_upstream_response(
-        status,
-        upstream_headers,
-        "text/event-stream; charset=utf-8",
-        body,
-    )
-}
-
-/// Bridge + buffered: full body buffering with optional format transformation.
-async fn process_bridge_buffered(
-    ctx: RequestContext,
-    upstream_resp: reqwest::Response,
-    status: reqwest::StatusCode,
-    upstream_headers: &reqwest::header::HeaderMap,
-    content_type: &str,
-    state: Arc<AppState>,
-) -> Result<Response<ProxyBody>, ProxyError> {
-    let resp_bytes: Bytes = upstream_resp.bytes().await.unwrap_or_default();
-    ctx.log.upstream_body_preview(
-        &ctx.provider_name,
-        status.as_u16(),
-        content_type,
-        &crate::proxy::logging::truncate(&String::from_utf8_lossy(&resp_bytes), 800),
-    );
-
-    let mut st = status;
-    let mut ct = content_type.to_string();
-    let mut bytes_out = resp_bytes;
-
-    if let Some(normalized) = ctx
-        .backend
-        .maybe_normalize_error(&ctx.log, &bytes_out, ctx.has_vision)
-    {
-        bytes_out = normalized.0;
-        st = normalized.1;
-        ct = "application/json".into();
-    }
-
-    if let Some(ref br) = ctx.bridge {
-        if st.is_success() {
-            if let Some((transformed, c)) =
-                bridge::transform_response(&bytes_out, &ct, br.stream, &br.model)
-            {
-                bytes_out = transformed;
-                ct = c;
-            }
-        }
-    }
-
-    ctx.backend
-        .log_rate_limit(&ctx.log, st.as_u16(), &ctx.path_and_query);
-    update_buffered_usage(&ctx, &state, &bytes_out).await;
-
-    let duration_ms = ctx.started_at.elapsed().as_millis() as u64;
-    let (input_tokens, output_tokens) = extract_usage_tokens_from_json_bytes(&bytes_out);
-    let err = upstream_error_summary(st.as_u16(), &bytes_out);
-    schedule_proxy_activity(
-        &state,
-        &ctx,
-        st.as_u16(),
-        duration_ms,
-        input_tokens,
-        output_tokens,
-        err,
-    );
-
-    Ok(build_upstream_response(
-        st,
-        upstream_headers,
-        &ct,
-        body_full(bytes_out),
-    ))
 }
 
 /// Native SSE streaming with usage extraction.
@@ -443,28 +293,7 @@ async fn process_buffered(
 // Usage helpers
 // ---------------------------------------------------------------------------
 
-/// Gdy upstream zwrócił gzip mimo braku dekompresji po stronie klienta — spróbuj rozpakować (nagłówek gzip).
-fn try_gunzip_error_body(body: &[u8]) -> Option<Vec<u8>> {
-    if body.len() < 12 || body[0] != 0x1f || body[1] != 0x8b {
-        return None;
-    }
-    use flate2::read::GzDecoder;
-    use std::io::Read;
-    let mut dec = GzDecoder::new(body);
-    let mut out = Vec::new();
-    dec.read_to_end(&mut out).ok()?;
-    (!out.is_empty()).then_some(out)
-}
-
-/// Zbyt dużo znaków zastępczych UTF-8 ⇒ traktuj jako binaria / śmieci, nie pokazuj w logu.
-fn utf8_lossy_is_garbled(s: &str) -> bool {
-    let rep = s.chars().filter(|&c| c == '\u{FFFD}').count();
-    let len = s.chars().count().max(1);
-    rep > 3 && rep * 8 > len
-}
-
-/// Wyciąga liczby tokenów z JSON odpowiedzi (Anthropic / OpenAI / LiteLLM).
-/// Krótki opis przyczyny dla odpowiedzi spoza zakresu 2xx (JSON `error.message` / `message` albo skrót body).
+/// Krótki opis przyczyny dla odpowiedzi spoza zakresu 2xx (JSON `error.message` / `message`).
 fn upstream_error_summary(status: u16, body: &[u8]) -> Option<String> {
     if (200..300).contains(&status) {
         return None;
@@ -472,10 +301,7 @@ fn upstream_error_summary(status: u16, body: &[u8]) -> Option<String> {
     if body.is_empty() {
         return Some(format!("HTTP {status}"));
     }
-    let owned = try_gunzip_error_body(body);
-    let body_ref: &[u8] = owned.as_deref().unwrap_or(body);
-
-    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(body_ref) {
+    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) {
         let msg = v
             .pointer("/error/message")
             .and_then(|x| x.as_str())
@@ -494,19 +320,7 @@ fn upstream_error_summary(status: u16, body: &[u8]) -> Option<String> {
             return Some(truncate_activity_error_line(m, 320));
         }
     }
-    let s = String::from_utf8_lossy(body_ref);
-    if utf8_lossy_is_garbled(&s) {
-        return Some(format!("HTTP {status} (compressed or non-text body)"));
-    }
-    let one: String = s
-        .chars()
-        .map(|c| if c.is_control() && c != ' ' { ' ' } else { c })
-        .collect();
-    let one = one.split_whitespace().collect::<Vec<_>>().join(" ");
-    if one.is_empty() {
-        return Some(format!("HTTP {status}"));
-    }
-    Some(truncate_activity_error_line(&one, 320))
+    Some(format!("HTTP {status}"))
 }
 
 fn truncate_activity_error_line(s: &str, max_chars: usize) -> String {
@@ -523,17 +337,7 @@ fn extract_usage_tokens_from_json_bytes(resp_bytes: &[u8]) -> (u64, u64) {
     let Ok(json) = serde_json::from_slice::<serde_json::Value>(resp_bytes) else {
         return (0, 0);
     };
-    let input = json
-        .pointer("/usage/input_tokens")
-        .and_then(|v| v.as_u64())
-        .or_else(|| json.pointer("/usage/prompt_tokens").and_then(|v| v.as_u64()))
-        .unwrap_or(0);
-    let output = json
-        .pointer("/usage/output_tokens")
-        .and_then(|v| v.as_u64())
-        .or_else(|| json.pointer("/usage/completion_tokens").and_then(|v| v.as_u64()))
-        .unwrap_or(0);
-    (input, output)
+    crate::proxy::stream::usage_from_response_json(&json)
 }
 
 struct ActivityEmitCtx {

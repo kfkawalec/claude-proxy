@@ -75,7 +75,10 @@ impl ProxyBackend for ClaudeBackend {
     ) -> RequestBuilder {
         for (name, value) in incoming_headers.iter() {
             let n = name.as_str();
-            if n.eq_ignore_ascii_case("host") || n.eq_ignore_ascii_case("content-length") {
+            if n.eq_ignore_ascii_case("host")
+                || n.eq_ignore_ascii_case("content-length")
+                || n.eq_ignore_ascii_case("accept-encoding")
+            {
                 continue;
             }
             req = req.header(name, value);
@@ -118,8 +121,7 @@ impl ProxyBackend for ClaudeBackend {
         };
         let input = json
             .get("usage")
-            .and_then(|u| u.get("input_tokens"))
-            .and_then(|v| v.as_u64())
+            .map(crate::proxy::stream::sum_anthropic_input)
             .unwrap_or(0);
         let output = json
             .get("usage")

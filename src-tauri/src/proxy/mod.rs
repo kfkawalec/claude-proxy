@@ -4,7 +4,6 @@ use http_body_util::combinators::UnsyncBoxBody;
 pub type ProxyBody = UnsyncBoxBody<Bytes, std::io::Error>;
 
 pub mod backends;
-pub mod bridge;
 pub mod error;
 pub mod handler;
 pub mod logging;

@@ -76,12 +76,6 @@ pub trait ProxyBackend: Send + Sync {
         effective_model: &Option<String>,
         resp_bytes: &[u8],
     );
-
-    /// Anthropic Messages -> OpenAI chat completions bridge (LiteLLM-only).
-    fn should_apply_chat_completions_bridge(&self, path: &str, model: Option<&str>) -> bool {
-        let _ = (path, model);
-        false
-    }
 }
 
 static CLAUDE: ClaudeBackend = ClaudeBackend;
