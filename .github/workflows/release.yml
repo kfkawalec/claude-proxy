@@ -108,8 +108,8 @@ jobs:
           path: updater-macos/
 
   publish:
-    # Pełny pipeline: needs: [build-linux, build-windows, build-macos]
-    needs: [build-macos]
+    # needs: [build-linux, build-windows, build-macos]
+    needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -145,7 +145,8 @@ jobs:
       - name: Stage files for GitHub Release
         run: |
           mkdir -p release
-          # Pełny staging: cp -v updater-linux/* updater-windows/* updater-macos/* release/
+          # cp -v updater-linux/* release/
+          cp -v updater-windows/* release/
           cp -v updater-macos/* release/
           cp -v updater/latest.json release/latest.json
 

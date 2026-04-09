@@ -69,7 +69,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzRDgxMjA0NjI4QjQwMUMKUldRY1FJdGlCQkxZWTNOOEZQM0E1L01XQzF6L1pvUmpzQzU0NEdJb3BhMUVMTlZaZlBhdW1YN1MK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFBQTk1Q0RENjEyQkREQkUKUldTKzNTdGgzVnlwcWlPUWNXVWNLdFE5RkNlT2h1NkJFenlsWmVWb1piRHBiZi9PNkRvRE5HZGoK",
       "endpoints": [
         "https://github.com/kfkawalec/claude-proxy/releases/latest/download/latest.json"
       ]
