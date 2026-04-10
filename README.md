@@ -7,6 +7,17 @@ Aplikacja desktopowa (Tauri + SolidJS) działająca jako proxy między Claude Co
 - **`src/`** - frontend SolidJS (panel, ikona w trayu)
 - **`src-tauri/`** - backend Rust (Tauri), bundlowanie do `.app` / `.exe` / AppImage
 
+### Ikony (aplikacja + tray)
+
+- **Źródło grafiki aplikacji** (logo z tłem, gradient): [`src/assets/favicon.svg`](src/assets/favicon.svg).
+- **Regeneracja** wszystkich plików z `bundle.icon` w `tauri.conf.json` (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.png`, `icon.ico`, `icon.icns`) oraz **tray** (`tray-icon.png`, `tray-icon@2x.png`, `tray-icon-win-dark.png`):
+
+```bash
+npm run icons
+```
+
+Używa lokalnego `@tauri-apps/cli` (`tauri icon`) do katalogu tymczasowego — w repozytorium zostają tylko potrzebne pliki (bez wygenerowanych katalogów iOS/Android). Ikony tray (`tray-icon*.png`) rasteruje **`src-tauri/icons/tray-icon.svg`** przez `@resvg/resvg-js` (te same proporcje co glif w favicon). Tylko tray: `npm run icons:tray` (to samo co `node scripts/rebuild-icons.mjs tray`).
+
 ## Wymagania
 
 ```bash
@@ -31,8 +42,36 @@ Vite + aplikacja Tauri. Ikona w obszarze powiadomień / pasku menu. Logi Rust w 
 
 ```bash
 npm run tauri build
+```
+
+Powstaje m.in. `.app` oraz (na macOS) `.dmg`. Tauri **nadal** generuje i uruchamia `bundle_dmg.sh` w katalogu `src-tauri/target/release/bundle/dmg/` — to nie jest plik w repozytorium, tylko artefakt buildu.
+
+Jeśli krok DMG kończy się błędem `bundle_dmg.sh` (często brak zgody na **Automatyzację** Findera dla terminala), użyj:
+
+```bash
+npm run tauri:build:dmg-safe
+```
+
+To **ten sam** skrypt `bundle_dmg.sh`, ale z opcją `--skip-jenkins`: **pomija** układanie ikon w oknie DMG przez AppleScript. Sam plik `.dmg` wygląda wtedy „gościej”, ale **`.app` jest taki sam**. Pełny wygląd DMG wraca po zwykłym `npm run tauri build` i ustawieniu uprawnień (Ustawienia → Prywatność → Automatyzacja).
+
+```bash
 open src-tauri/target/release/bundle/macos/ClaudeProxy.app
 ```
+
+## Wersjonowanie i release
+
+- **Źródło prawdy:** pole `version` w `package.json`. Skrypt `scripts/sync-version.cjs` ustawia tę samą wersję w `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` oraz w wpisie pakietu w `src-tauri/Cargo.lock`.
+- **Podbicie wersji (bez commita i tagu lokalnego):**
+
+```bash
+npm run bump          # patch, np. 0.1.1 → 0.1.2
+npm run bump:minor    # minor
+npm run bump:major    # major
+```
+
+Po `bump` zrób commit ze zmianami i push na `main`. Workflow **GitHub Actions** (`.github/workflows/release.yml`) zbuduje artefakty i utworzy release z tagiem **`v<wersja>`** (z prefiksem `v`). Nie twórz ręcznie drugiego tagu w formacie `0.1.0` bez `v` — powstanie duplikat względem CI.
+
+Ręczna edycja `package.json` jest możliwa; wtedy jednorazowo uruchom: `node scripts/sync-version.cjs`.
 
 ## Konfiguracja Claude Code
 
@@ -72,8 +111,8 @@ Logi Rust w terminalu uruchomionym z `npm run tauri dev`.
 
 ### Produkcja
 
-- **Plik proxy (żądania, upstream):** domyślnie dopisywany do  
-  `~/.config/claude-proxy/proxy.log` (macOS/Linux) lub `%USERPROFILE%\.config\claude-proxy\proxy.log` (Windows).  
+- **Plik proxy (żądania, upstream):** domyślnie dopisywany do
+  `~/.config/claude-proxy/proxy.log` (macOS/Linux) lub `%USERPROFILE%\.config\claude-proxy\proxy.log` (Windows).
   Wyłączenie: `CLAUDE_PROXY_FILE_LOG=0` (wtedy same linie idą na stdout — przy apce z Docka na macOS zwykle „nigdzie”).
 - **Pełne body żądania** (do porównań / debugu): `CLAUDE_PROXY_LOG_REQUEST_BODY=1` (opcjonalnie `CLAUDE_PROXY_LOG_REQUEST_BODY_MAX` w bajtach).
 

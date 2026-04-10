@@ -11,7 +11,9 @@ mod usage_db;
 use config::{load_config, watch_config_file};
 use panel_chrome::sync_panel_chrome_from_window;
 use state::AppState;
-use tauri::{Emitter, Manager, RunEvent};
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
+use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

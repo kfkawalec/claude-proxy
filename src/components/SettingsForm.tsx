@@ -1,6 +1,6 @@
-import { setConfig } from "../lib/store";
+import { config, setConfig } from "../lib/store";
 import { api, type AppConfig } from "../lib/tauri";
-import { createSignal, onMount } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 import { t } from "../lib/i18n";
 import Input from "./ui/Input";
 import Button from "./ui/Button";
@@ -34,10 +34,23 @@ export default function SettingsForm() {
   });
   const [saved, setSaved] = createSignal(false);
 
-  onMount(async () => {
-    const cfg = await api.getConfig();
-    setForm(cfg);
-    setConfig(cfg);
+  // Provider przełącza `ProviderSwitch` → `setConfig`; lokalny `form` żyje tylko z pierwszego renderu,
+  // stąd „trzeba przełączyć zakładkę”. Pełna synchronizacja z `config()` tylko: (1) pierwszy raz,
+  // (2) gdy zmieni się `provider` — żeby zapis mapowania modeli nie kasował wpisywanego klucza API.
+  let syncedFromStore = false;
+  createEffect(() => {
+    const c = config();
+    if (!c) return;
+    setForm((prev) => {
+      if (!syncedFromStore) {
+        syncedFromStore = true;
+        return { ...c };
+      }
+      if (prev.provider !== c.provider) {
+        return { ...c };
+      }
+      return prev;
+    });
   });
 
   const update = (key: keyof AppConfig, val: any) => {
@@ -53,7 +66,8 @@ export default function SettingsForm() {
       litellm_api_key: f.litellm_api_key,
       litellm_endpoint: f.litellm_endpoint,
       litellm_display_name: f.litellm_display_name,
-      provider: f.provider,
+      // Provider wybiera się tylko w SegmentedControl — nie nadpisuj z nieaktualnego `form`.
+      provider: latest?.provider ?? f.provider,
       port: f.port,
       model_overrides: latest?.model_overrides ?? f.model_overrides,
     };

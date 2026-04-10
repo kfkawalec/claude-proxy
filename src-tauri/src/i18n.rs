@@ -5,19 +5,38 @@ pub enum Lang {
 }
 
 pub fn detect_lang() -> Lang {
-    if let Ok(out) = std::process::Command::new("defaults")
-        .args(["read", "-g", "AppleLanguages"])
-        .output()
+    // macOS: prefer język z listy Apple (jak WebView / `navigator.languages`).
+    #[cfg(target_os = "macos")]
     {
-        let s = String::from_utf8_lossy(&out.stdout).to_lowercase();
-        if let Some(first) = s
-            .lines()
-            .map(|l| l.trim().trim_matches(',').trim_matches('"'))
-            .find(|l| l.starts_with("en") || l.starts_with("pl"))
+        if let Ok(out) = std::process::Command::new("defaults")
+            .args(["read", "-g", "AppleLanguages"])
+            .output()
         {
-            return if first.starts_with("pl") { Lang::Pl } else { Lang::En };
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout).to_lowercase();
+                if let Some(first) = s
+                    .lines()
+                    .map(|l| l.trim().trim_matches(',').trim_matches('"'))
+                    .find(|l| l.starts_with("en") || l.starts_with("pl"))
+                {
+                    return if first.starts_with("pl") {
+                        Lang::Pl
+                    } else {
+                        Lang::En
+                    };
+                }
+            }
         }
     }
+
+    // Windows / Linux / fallback: locale UI (np. `pl-PL`) — zgodne z typową instalacją PL.
+    if let Some(locale) = sys_locale::get_locale() {
+        let low = locale.to_lowercase();
+        if low.starts_with("pl") {
+            return Lang::Pl;
+        }
+    }
+
     if std::env::var("LANGUAGE")
         .unwrap_or_default()
         .to_lowercase()

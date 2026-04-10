@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/unpkg/1.0.0/tauri-apps/api/2/tauri.conf.schema.json",
   "productName": "ClaudeProxy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.ccproxy.dev",
   "build": {
     "frontendDist": "../dist",
@@ -44,6 +44,7 @@
     "createUpdaterArtifacts": false,
     "targets": [
       "app",
+      "dmg",
       "nsis",
       "msi",
       "appimage"

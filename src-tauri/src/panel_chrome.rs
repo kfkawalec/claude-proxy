@@ -2,15 +2,6 @@
 use tauri::{AppHandle, Manager};
 
 pub fn sync_panel_chrome_from_window(app: &AppHandle) {
-    let panel_showing = app
-        .get_webview_window("main")
-        .map(|w| {
-            let visible = w.is_visible().unwrap_or(false);
-            let minimized = w.is_minimized().unwrap_or(false);
-            visible && !minimized
-        })
-        .unwrap_or(false);
-
     // Tray should remain visible even when the panel window is hidden.
     if let Some(tray) = app.tray_by_id("main-tray") {
         let _ = tray.set_visible(true);
@@ -18,6 +9,14 @@ pub fn sync_panel_chrome_from_window(app: &AppHandle) {
 
     #[cfg(target_os = "macos")]
     {
+        let panel_showing = app
+            .get_webview_window("main")
+            .map(|w| {
+                let visible = w.is_visible().unwrap_or(false);
+                let minimized = w.is_minimized().unwrap_or(false);
+                visible && !minimized
+            })
+            .unwrap_or(false);
         let policy = if panel_showing {
             tauri::ActivationPolicy::Regular
         } else {

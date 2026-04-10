@@ -14,25 +14,24 @@
     </linearGradient>
   </defs>
 
-  <!-- Background rounded square -->
+  <!-- Background rounded square (bez obwódki — czytelniej w małych rozmiarach) -->
   <rect width="32" height="32" rx="7" fill="url(#bg)"/>
 
-  <!-- Subtle inner glow border -->
-  <rect width="32" height="32" rx="7" fill="none" stroke="#ff7b54" stroke-width="0.5" stroke-opacity="0.3"/>
+  <g>
+    <!-- Claude-inspired "C" arc shape (bez dodatkowego scale — spójne z tray-icon.svg) -->
+    <path d="M 19 8
+             A 8.5 8.5 0 1 0 19 24
+             L 19 21
+             A 5.5 5.5 0 1 1 19 11
+             Z"
+          fill="url(#orange)" opacity="0.95"/>
 
-  <!-- Claude-inspired "C" arc shape -->
-  <path d="M 19 8
-           A 8.5 8.5 0 1 0 19 24
-           L 19 21
-           A 5.5 5.5 0 1 1 19 11
-           Z"
-        fill="url(#orange)" opacity="0.95"/>
+    <!-- Proxy arrow — horizontal line through the C opening -->
+    <line x1="18" y1="16" x2="26" y2="16" stroke="url(#arrow)" stroke-width="1.8" stroke-linecap="round"/>
+    <!-- Arrowhead -->
+    <polyline points="23,13 26,16 23,19" fill="none" stroke="#ff7b54" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- Proxy arrow  horizontal line through the C opening -->
-  <line x1="18" y1="16" x2="26" y2="16" stroke="url(#arrow)" stroke-width="1.8" stroke-linecap="round"/>
-  <!-- Arrowhead -->
-  <polyline points="23,13 26,16 23,19" fill="none" stroke="#ff7b54" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- Small dot at entry  proxy relay dot -->
-  <circle cx="19.5" cy="16" r="1.2" fill="#ff9f6b"/>
+    <!-- Small dot at entry — proxy relay dot -->
+    <circle cx="19.5" cy="16" r="1.2" fill="#ff9f6b"/>
+  </g>
 </svg>

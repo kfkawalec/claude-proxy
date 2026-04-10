@@ -5,6 +5,7 @@ use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::fs;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

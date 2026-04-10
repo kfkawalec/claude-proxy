@@ -7,6 +7,26 @@ use tauri::{
     AppHandle, Emitter, Listener,
 };
 
+#[cfg(target_os = "windows")]
+fn apply_windows_tray_icon_for_theme(tray: &tauri::tray::TrayIcon) {
+    use dark_light::Mode;
+    let bytes: &'static [u8] = match dark_light::detect().unwrap_or(Mode::Unspecified) {
+        Mode::Dark => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/icons/tray-icon-win-dark.png"
+        )),
+        Mode::Light | Mode::Unspecified => {
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/tray-icon.png"))
+        }
+    };
+    if let Ok(img) = image::load_from_memory(bytes) {
+        let rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        let icon = tauri::image::Image::new_owned(rgba.into_raw(), w, h);
+        let _ = tray.set_icon(Some(icon));
+    }
+}
+
 fn hub_display_label(lang: Lang, configured: &str) -> String {
     let t = configured.trim();
     if !t.is_empty() {
@@ -149,6 +169,8 @@ pub fn schedule_tray_menu_update(app: &AppHandle, state: &Arc<AppState>) {
             {
                 let _ = tray.set_menu(Some(menu));
             }
+            #[cfg(target_os = "windows")]
+            apply_windows_tray_icon_for_theme(&tray);
             let route = if provider == "litellm" {
                 hub_display_label(lang, &litellm_display)
             } else {
@@ -168,6 +190,8 @@ pub fn schedule_tray_menu_update(app: &AppHandle, state: &Arc<AppState>) {
 
 pub fn setup_tray(app: &AppHandle, state: Arc<AppState>) -> Result<(), Box<dyn std::error::Error>> {
     let tray = app.tray_by_id("main-tray").expect("tray not found");
+    #[cfg(target_os = "windows")]
+    apply_windows_tray_icon_for_theme(&tray);
 
     schedule_tray_menu_update(app, &state);
 

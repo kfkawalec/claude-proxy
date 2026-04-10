@@ -96,9 +96,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - run: |
           mkdir -p updater-macos
-          find src-tauri/target/release/bundle/macos -maxdepth 1 -type f -name '*.app.tar.gz' -exec cp {} updater-macos/ \;
-          find src-tauri/target/release/bundle/macos -maxdepth 1 -type f -name '*.sig' -exec cp {} updater-macos/ \;
-          find src-tauri/target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' -exec cp {} updater-macos/ \;
+          set -e
+          MACOS_BUNDLE="src-tauri/target/release/bundle/macos"
+          DMG_DIR="src-tauri/target/release/bundle/dmg"
+          find "$MACOS_BUNDLE" -maxdepth 1 -type f -name '*.app.tar.gz' -exec cp {} updater-macos/ \;
+          find "$MACOS_BUNDLE" -maxdepth 1 -type f -name '*.sig' -exec cp {} updater-macos/ \;
+          if [ -d "$DMG_DIR" ]; then
+            find "$DMG_DIR" -maxdepth 1 -type f -name '*.dmg' -exec cp {} updater-macos/ \;
+          fi
           ARCH=$(uname -m)
           case "$ARCH" in
             arm64) echo "darwin-aarch64" > updater-macos/platform.txt ;;

@@ -28,4 +28,14 @@ const tauri = JSON.parse(fs.readFileSync(tauriPath, "utf8"));
 tauri.version = v;
 fs.writeFileSync(tauriPath, JSON.stringify(tauri, null, 2) + "\n");
 
+const lockPath = path.join(root, "src-tauri", "Cargo.lock");
+if (fs.existsSync(lockPath)) {
+  const lock = fs.readFileSync(lockPath, "utf8");
+  const next = lock.replace(
+    /^name = "claude-proxy"\nversion = "[^"]+"/m,
+    `name = "claude-proxy"\nversion = "${v}"`
+  );
+  if (next !== lock) fs.writeFileSync(lockPath, next);
+}
+
 console.log("sync-version:", v);
